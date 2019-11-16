@@ -59,8 +59,9 @@ endfunction
 function! s:select_target_winid() abort
   let l:curwin = winnr()
   let cands = range(1, winnr('$'))->filter('v:val !=# l:curwin')
+  " TODO: use popup to confirm
   let l:nr = confirm(
-  \ 'Select Window:',
+  \ 'Select Target Window:',
   \ cands->join("\n"))
   if l:nr ==# 0
     return 0
@@ -69,6 +70,7 @@ function! s:select_target_winid() abort
 endfunction
 
 function! s:select_direction() abort
+  " TODO: use popup to confirm (top window gets hidden when prompt is showed)
   let l:nr = confirm(
   \   'Select Direction:',
   \   ['h: left', 'j: down', 'k: up', 'l: right', "e: exit"]->join("\n"),
