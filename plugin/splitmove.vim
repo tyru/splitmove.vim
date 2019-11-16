@@ -23,72 +23,163 @@ function! s:start() abort
   endif
 
   let l:CloseIndicator = s:show_winnr_indicator()
-  let l:target = s:select_target_winid()
-  if l:target ==# 0
+  call s:select_target_winid(function('s:cb_target_winid', [l:CloseIndicator]))
+endfunction
+
+function! s:cb_target_winid(CloseIndicator, target) abort
+  call a:CloseIndicator()
+  if a:target ==# 0
     echo 'Cancelled.'
     return
   endif
-  call win_splitmove(winnr(), l:target)
-  call l:CloseIndicator()
+  call win_splitmove(winnr(), a:target)
   redraw
 
-  while 1
-    let l:CloseIndicator = s:show_direction_indicator()
-    redraw
-    let l:dir = s:select_direction()
-    if empty(l:dir)
-      " TODO: <esc> to revert window layout
-      break
-    endif
-    call win_splitmove(winnr(), l:target, l:dir)
-    call l:CloseIndicator()
-  endwhile
-  redraw
+  call s:select_direction(a:target)
 endfunction
 
-
 function! s:show_winnr_indicator() abort
-  " TODO
-  return {-> 42}
+  for l:winnr in range(1, winnr('$'))
+    call popup_create(['(' . winnr . ')'], s:get_winnr_pos(l:winnr))
+  endfor
+  return {->popup_clear()}
 endfunction
 
 function! s:show_direction_indicator() abort
-  return {-> 42}
+  call popup_create(['(' . winnr() . ')'], s:get_winnr_pos(winnr()))
+  return {->popup_clear()}
 endfunction
 
-function! s:select_target_winid() abort
+function! s:get_winnr_pos(winnr) abort
+  let l:pos = win_screenpos(a:winnr)
+  return #{
+  \ line: l:pos[0], col: l:pos[1],
+  \}
+endfunction
+
+function! s:select_target_winid(callback) abort
   let l:curwin = winnr()
-  let cands = range(1, winnr('$'))->filter('v:val !=# l:curwin')
-  " TODO: use popup to confirm
-  let l:nr = confirm(
-  \ 'Select Target Window:',
-  \ cands->join("\n"))
-  if l:nr ==# 0
-    return 0
-  endif
-  return win_getid(cands[l:nr - 1])
+  let l:cands = range(1, winnr('$'))
+              \->filter({-> v:val !=# l:curwin})
+  let l:display_cands = l:cands
+              \->copy()
+              \->map({-> printf('(%d) %s', v:val, bufname(v:val) ==# '' ? '[No Name]' : bufname(v:val))})
+  call s:popup_confirm('Select Target Window:', l:display_cands, 0, {winid, nr ->
+  \ a:callback(win_getid(l:cands[l:nr - 1]))
+  \})
 endfunction
 
-function! s:select_direction() abort
-  " TODO: use popup to confirm (top window gets hidden when prompt is showed)
-  let l:nr = confirm(
-  \   'Select Direction:',
-  \   ['h: left', 'j: down', 'k: up', 'l: right', "e: exit"]->join("\n"),
-  \   5)
-  if l:nr ==# 0 || l:nr ==# 5
-    return {}
+function! s:popup_confirm(prompt, cands, default_nr, callback) abort
+  if empty(a:cands)
+    throw 's:popup_confirm(): the 2nd arg must not be empty!'
   endif
-  return [
-  "\ 'h'
-  \ {'vertical': 1, 'rightbelow': 0},
-  "\ 'j'
-  \ {'vertical': 0, 'rightbelow': 1},
-  "\ 'k'
-  \ {'vertical': 0, 'rightbelow': 0},
-  "\ 'l'
-  \ {'vertical': 1, 'rightbelow': 1},
-  \][l:nr - 1]
+  let l:prompt = a:prompt->split("\n", 1)
+  let l:ctx = s:new_popup_context(
+  \ #{selected: 0, prompt: l:prompt, cands: a:cands->copy()}
+  \)
+  let l:winid = popup_create(l:prompt + a:cands, #{
+  \ pos: 'center',
+  \ zindex: 200,
+  \ drag: 1,
+  \ wrap: 0,
+  \ border: [],
+  \ cursorline: 1,
+  \ filter: function('s:popup_confirm_filter', [l:ctx]),
+  \ filtermode: 'n',
+  \ padding: [0,1,0,1],
+  \ callback: a:callback,
+  \})
+  call win_execute(l:winid, 'normal! 2G')
 endfunction
+
+let s:PopupContext = {}
+
+function! s:new_popup_context(ctx) abort
+  return extend(s:PopupContext->deepcopy(), a:ctx->deepcopy())
+endfunction
+
+function! s:popup_context_down(winid) abort dict
+  if self.cands->len() > self.selected + 1
+    let self.selected += 1
+    let l:lnum = self.prompt->len() + self.selected + 1
+    call win_execute(a:winid, 'normal! ' . l:lnum . 'G')
+  endif
+endfunction
+let s:PopupContext.down = function('s:popup_context_down')
+
+function! s:popup_context_up(winid) abort dict
+  if self.selected > 0
+    let self.selected -= 1
+    let l:lnum = self.prompt->len() + self.selected + 1
+    call win_execute(a:winid, 'normal! ' . l:lnum . 'G')
+  endif
+endfunction
+let s:PopupContext.up = function('s:popup_context_up')
+
+function! s:popup_confirm_filter(ctx, winid, key) abort
+  if a:key ==# 'j'
+    call a:ctx.down(a:winid)
+    return 1
+  elseif a:key ==# 'k'
+    call a:ctx.up(a:winid)
+    return 1
+  elseif a:key ==# "\<Esc>"
+    call popup_close(a:winid, 0)
+    return 1
+  elseif a:key ==# "\<Enter>"
+    call popup_close(a:winid, a:ctx.selected + 1)
+    return 1
+  endif
+  return 0
+endfunction
+
+function! s:select_direction(target) abort
+  let l:winid = popup_create(
+  \ [
+  \   'Select Direction:',
+  \   '  h: left',
+  \   '  j: down',
+  \   '  k: up',
+  \   '  l: right',
+  \   '  e,<Enter>: exit',
+  \ ],
+  \ #{
+  \   pos: 'center',
+  \   zindex: 200,
+  \   drag: 1,
+  \   wrap: 0,
+  \   border: [],
+  \   filter: function('s:popup_direction_filter', [a:target]),
+  \   filtermode: 'n',
+  \   padding: [0,1,0,1],
+  \})
+  call win_execute(l:winid, 'normal! 2G')
+endfunction
+
+function! s:popup_direction_filter(target, winid, key) abort
+  if a:key ==# 'j'
+    call win_splitmove(winnr(), a:target, #{vertical: 0, rightbelow: 1})
+    return 1
+  elseif a:key ==# 'k'
+    call win_splitmove(winnr(), a:target, #{vertical: 0, rightbelow: 0})
+    return 1
+  elseif a:key ==# 'h'
+    call win_splitmove(winnr(), a:target, #{vertical: 1, rightbelow: 0})
+    return 1
+  elseif a:key ==# 'l'
+    call win_splitmove(winnr(), a:target, #{vertical: 1, rightbelow: 1})
+    return 1
+  elseif a:key ==# "\<Esc>"
+    " TODO: <esc> to revert window layout
+    call popup_close(a:winid, 0)
+    return 1
+  elseif a:key ==# "\<Enter>" || a:key ==# 'e'
+    call popup_close(a:winid, 0)
+    return 1
+  endif
+  return 0
+endfunction
+
 
 
 " Restore 'cpoptions' {{{
