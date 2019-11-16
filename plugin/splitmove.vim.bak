@@ -1,0 +1,57 @@
+" vim:foldmethod=marker:fen:
+scriptencoding utf-8
+
+" Load Once {{{
+if exists('g:loaded_splitmove') && g:loaded_splitmove
+    finish
+endif
+let g:loaded_splitmove = 1
+" }}}
+" Saving 'cpoptions' {{{
+let s:save_cpo = &cpo
+set cpo&vim
+" }}}
+
+
+nnoremap <Plug>(splitmove-start) :<C-u>call <SID>start()
+
+function! s:start() abort
+  let l:restore = s:save_statusline()
+  call s:draw()
+  try
+  finally
+    call l:restore()
+  endtry
+  let l:target = s:get_target_winid()
+endfunction
+
+function! s:save_statusline() abort
+  let stlsave = {}
+  for winnr in range(1, winnr('$'))
+    let stlsave[win_getid(winnr)] = getwinvar(winnr, 'statusline', &statusline)
+  endfor
+  function! s:restore() abort closure
+    for [winid, stl] in items(stlsave)
+      call setwinvar(winid, 'statusline', stl)
+    endfor
+  endfunction
+  return funcref('s:restore')
+endfunction
+
+function! s:draw() abort
+endfunction
+
+function! s:get_target_winid() abort
+  " TODO
+  return s:getchar()
+endfunction
+
+function! s:getchar(...) abort
+  let c = call('getchar', a:000)
+  return type(c) is# v:t_string ? c : nr2char(c)
+endfunction
+
+
+" Restore 'cpoptions' {{{
+let &cpo = s:save_cpo
+" }}}
